@@ -41,7 +41,8 @@ public class BuildingManager : MonoBehaviour
 
     [Header("Indicator Colors")]
     public Color availableColor = Color.green;
-    public Color unavailableColor = new Color(0.6f, 0.6f, 0.6f, 0.9f);
+    // public Color unavailableColor = new Color(0.6f, 0.6f, 0.6f, 0.9f);
+    public Color unavailableColor = Color.red;
 
     [Header("Debug")]
     public bool showGizmos = false;
@@ -383,20 +384,39 @@ public class BuildingManager : MonoBehaviour
         return _gridOrigin + new Vector2(cell.x * _cellSize.x, cell.y * _cellSize.y);
     }
 
+    // static Vector2 GetPrefabWorldSize(GameObject prefab)
+    // {
+    //     if (prefab == null) return Vector2.one;
+
+    //     if (prefab.TryGetComponent<BoxCollider2D>(out var box))
+    //     {
+    //         Vector3 s = prefab.transform.lossyScale;
+    //         return new Vector2(Mathf.Abs(box.size.x * s.x), Mathf.Abs(box.size.y * s.y));
+    //     }
+    //     if (prefab.TryGetComponent<SpriteRenderer>(out var sr))
+    //     {
+    //         Vector3 s = prefab.transform.lossyScale;
+    //         var sz = sr.sprite ? sr.sprite.bounds.size : Vector3.one;
+    //         return new Vector2(Mathf.Abs(sz.x * s.x), Mathf.Abs(sz.y * s.y));
+    //     }
+    //     return Vector2.one;
+    // }
+
     static Vector2 GetPrefabWorldSize(GameObject prefab)
     {
         if (prefab == null) return Vector2.one;
 
-        if (prefab.TryGetComponent<BoxCollider2D>(out var box))
-        {
-            Vector3 s = prefab.transform.lossyScale;
-            return new Vector2(Mathf.Abs(box.size.x * s.x), Mathf.Abs(box.size.y * s.y));
-        }
+        // USE BOX COLLIDER IF PLAYER INTERACTS WITH PREFABS, otherwise just sprite size
+        // if (prefab.TryGetComponent<BoxCollider2D>(out var box))
+        // {
+        //     // Use BoxCollider2D size directly
+        //     return new Vector2(Mathf.Abs(box.size.x), Mathf.Abs(box.size.y));
+        // }
         if (prefab.TryGetComponent<SpriteRenderer>(out var sr))
         {
-            Vector3 s = prefab.transform.lossyScale;
+            // Use SpriteRenderer bounds size directly
             var sz = sr.sprite ? sr.sprite.bounds.size : Vector3.one;
-            return new Vector2(Mathf.Abs(sz.x * s.x), Mathf.Abs(sz.y * s.y));
+            return new Vector2(Mathf.Abs(sz.x), Mathf.Abs(sz.y));
         }
         return Vector2.one;
     }

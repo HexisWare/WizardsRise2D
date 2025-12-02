@@ -83,7 +83,7 @@ SpriteRenderer:
   m_SortingLayerID: 0
   m_SortingLayer: 0
   m_SortingOrder: 6
-  m_Sprite: {fileID: 7482667652216324306, guid: 311925a002f4447b3a28927169b83ea6, type: 3}
+  m_Sprite: {fileID: -4618713348538418799, guid: 22cf5b70bcf85cc45b5380ebd8efd260, type: 3}
   m_Color: {r: 1, g: 0, b: 0.78961563, a: 1}
   m_FlipX: 0
   m_FlipY: 0
@@ -180,7 +180,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   maxHP: 3
-  partPickupPrefab: {fileID: 6729032851303233361, guid: d7f9870c8465f6f479c16a5584d409d7, type: 3}
+  partPickupPrefab: {fileID: 4704588398301405645, guid: 87bbeea28ab32354db90620376ddccf0, type: 3}
   dropValue: 20
 --- !u!114 &160961967034087304
 MonoBehaviour:
@@ -194,4 +194,4 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 4949f542082ebc54f8a5d3e3d8eee9c1, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  moveSpeed: 3.3
+  moveSpeed: 2.3

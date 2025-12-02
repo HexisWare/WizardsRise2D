@@ -7,9 +7,10 @@ public class BuildIndicator : MonoBehaviour
     [HideInInspector] public Vector3 targetWorld;
     [HideInInspector] public bool canBuild;
 
-    [SerializeField] Color availableColor   = Color.green;
-    [SerializeField] Color unavailableColor = new Color(0.6f, 0.6f, 0.6f, 0.9f);
-    [SerializeField] Color hoverColor       = Color.yellow;
+    public Color availableColor   = Color.green;
+    // [SerializeField] Color unavailableColor = new Color(0.6f, 0.6f, 0.6f, 0.9f);
+    public Color unavailableColor = Color.red;
+    public Color hoverColor       = Color.yellow;
 
     SpriteRenderer _sr;
     BoxCollider2D _col;
