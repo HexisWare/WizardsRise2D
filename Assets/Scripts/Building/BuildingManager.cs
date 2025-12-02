@@ -48,7 +48,9 @@ public class BuildingManager : MonoBehaviour
     private Dictionary<Vector2Int, Vector2> _tileSizes = new Dictionary<Vector2Int, Vector2>();
     private Dictionary<Vector2Int, Vector2> _tileCenters = new Dictionary<Vector2Int, Vector2>();
     private Dictionary<(Vector2, Vector2), int> _perimeterEdges = new Dictionary<(Vector2, Vector2), int>();
-
+    private float _minYAllowed;
+    private Vector2 _lastGoodPos;
+    private bool _hasLastGood = false;
 
 
     void Start()
@@ -70,6 +72,7 @@ public class BuildingManager : MonoBehaviour
             return;
         }
         _gridOrigin = foundationTiles[0].position;
+        _minYAllowed = _gridOrigin.y;
 
         // Initialize cell size based on the first foundation tile's prefab
         GameObject firstFoundationTile = foundationTiles[0].gameObject;
@@ -146,79 +149,99 @@ public class BuildingManager : MonoBehaviour
 
     void UpdateIndicatorPosition()
     {
-        Vector2 mouseWorld = _cam.ScreenToWorldPoint(Input.mousePosition);
-
-        // Get size of the tile being placed
-        Vector2 tileSize = GetPrefabWorldSize(tileOptions[_currentTileIndex].tilePrefab);
-        Vector2 half = tileSize * 0.5f;
-
-        float bestDist = float.MaxValue;
-        Vector2 bestPos = mouseWorld;
-
-        foreach (var kvp in _perimeterEdges)
-        {
-            if (kvp.Value != 1) continue; // only outer edges
-
-            var (A, B) = kvp.Key;
-
-            // Get closest point ON the perimeter edge
-            Vector2 closest = ClosestPointOnSegment(A, B, mouseWorld);
-
-            // Determine edge direction (horizontal or vertical)
-            bool horizontal = Mathf.Abs(A.y - B.y) < 0.0001f; // same height → horizontal edge
-            bool vertical   = Mathf.Abs(A.x - B.x) < 0.0001f; // same x → vertical edge
-
-            Vector2 snappedCenter = closest;
-
-            if (horizontal)
-            {
-                // Horizontal: tile sits ABOVE or BELOW edge
-                if (mouseWorld.y > A.y)
-                    snappedCenter.y = A.y + half.y;  // above edge
-                else
-                    snappedCenter.y = A.y - half.y;  // below edge
-            }
-            else if (vertical)
-            {
-                // Vertical: tile sits LEFT or RIGHT of edge
-                if (mouseWorld.x > A.x)
-                    snappedCenter.x = A.x + half.x;
-                else
-                    snappedCenter.x = A.x - half.x;
-            }
-
-            // ❗ Skip this candidate if it would overlap any existing tile
-            if (OverlapsExistingRect(snappedCenter, tileSize))
-                continue;
-
-            float d = Vector2.Distance(mouseWorld, snappedCenter);
-
-            if (d < bestDist)
-            {
-                bestDist = d;
-                bestPos = snappedCenter;
-            }
-        }
-
-        // No valid perimeter position found
-        if (bestDist == float.MaxValue)
+        if (_perimeterEdges.Count == 0)
         {
             _indicator.SetActive(false);
             return;
         }
 
-        _indicator.SetActive(true);
-        _indicator.transform.position = bestPos;
+        Vector2 mouseWorld = _cam.ScreenToWorldPoint(Input.mousePosition);
 
-        // Color logic
-        var selectedTile = tileOptions[_currentTileIndex];
-        bool canAfford = playerInventory.parts >= selectedTile.buildCost;
+        Vector2 tileSize = GetPrefabWorldSize(tileOptions[_currentTileIndex].tilePrefab);
+        Vector2 half = tileSize * 0.5f;
 
-        var bi = _indicator.GetComponent<BuildIndicator>();
-        if (bi)
-            bi.ConfigureState(canAfford, availableColor, unavailableColor);
+        float bestDist = float.MaxValue;
+        Vector2 bestPos = Vector2.zero;
+        bool foundValid = false;
+
+        foreach (var kvp in _perimeterEdges)
+        {
+            if (kvp.Value != 1) continue;
+
+            var (A, B) = kvp.Key;
+
+            Vector2 closest = ClosestPointOnSegment(A, B, mouseWorld);
+
+            bool horizontal = Mathf.Abs(A.y - B.y) < 0.0001f;
+            bool vertical   = Mathf.Abs(A.x - B.x) < 0.0001f;
+
+            Vector2 snapped = closest;
+
+            // Correct side positioning
+            if (horizontal)
+                snapped.y = (mouseWorld.y > A.y) ? A.y + half.y : A.y - half.y;
+            else if (vertical)
+                snapped.x = (mouseWorld.x > A.x) ? A.x + half.x : A.x - half.x;
+
+            // Forbidden below-min-Y placement
+            if (snapped.y < _minYAllowed - 0.001f)
+                continue;
+
+            // Skip if overlapping existing
+            if (OverlapsExistingRect(snapped, tileSize))
+                continue;
+
+            // VALID candidate
+            float d = Vector2.Distance(mouseWorld, snapped);
+            if (d < bestDist)
+            {
+                bestDist = d;
+                bestPos = snapped;
+                foundValid = true;
+            }
+        }
+
+        // ----- FINAL VALIDATION HANDLING -----
+        if (foundValid)
+        {
+            // Save this as the new last known valid position
+            _lastGoodPos = bestPos;
+            _hasLastGood = true;
+
+            _indicator.SetActive(true);
+            _indicator.transform.position = bestPos;
+
+            var tile = tileOptions[_currentTileIndex];
+            bool canAfford = playerInventory.parts >= tile.buildCost;
+
+            var bi = _indicator.GetComponent<BuildIndicator>();
+            if (bi) bi.ConfigureState(canAfford, availableColor, unavailableColor);
+
+            return;
+        }
+
+        // No valid position this frame
+        if (_hasLastGood)
+        {
+            _indicator.SetActive(true);
+            _indicator.transform.position = _lastGoodPos;
+
+            // The indicator STILL updates color based on affordability
+            var tile = tileOptions[_currentTileIndex];
+            bool canAfford = playerInventory.parts >= tile.buildCost;
+
+            var bi = _indicator.GetComponent<BuildIndicator>();
+            if (bi) bi.ConfigureState(canAfford, availableColor, unavailableColor);
+
+            return;
+        }
+        else
+        {
+            // No valid ever found → hide indicator
+            _indicator.SetActive(false);
+            return;
+        }
     }
-
 
 
     Vector2 ClosestPointOnSegment(Vector2 A, Vector2 B, Vector2 P)
