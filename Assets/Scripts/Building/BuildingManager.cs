@@ -1,5 +1,6 @@
 using UnityEngine;
 using System.Collections.Generic;
+using System.Collections;
 
 [System.Serializable]
 public class TileOption
@@ -21,6 +22,13 @@ public class BuildingManager : MonoBehaviour
     public List<Transform> foundationTiles; // At least one placed tile to seed the grid
     public float snapTolerance = 0.15f; // how close is “close enough” to auto-snap
     public float snapStrength = 1f;     // 1 = full snap, 0.5 = half pull
+    public GameObject partBallPrefab; // Assign the PartBall prefab in the inspector
+    public int numberOfParts = 10; // Number of mini squares to spawn
+    public float arcHeight = 4f; // Height of the arc
+    public float arcWidth = 4f; // Width of the arc
+    public float animationDuration = 1f; // Duration of the animation
+    public float spawnDelay = 0.05f; 
+
 
     [Header("Rules")]
     public bool restrictFirstBuildAbove = true; // First placement cannot go Down
@@ -53,6 +61,7 @@ public class BuildingManager : MonoBehaviour
     private float _minYAllowed;
     private Vector2 _lastGoodPos;
     private bool _hasLastGood = false;
+    
 
 
     void Start()
@@ -306,6 +315,57 @@ public class BuildingManager : MonoBehaviour
 
         // Update indicator after placement
         UpdateIndicatorPosition();
+
+        // Trigger the build animation
+        // TriggerBuildAnimation(worldCenter);
+        StartCoroutine(SpawnPartsSequentially(worldCenter, selectedTile.buildCost));
+    }
+
+    IEnumerator SpawnPartsSequentially(Vector3 targetPosition, int numberOfPartBalls)
+    {
+        for (int i = 0; i < numberOfPartBalls; i++)
+        {
+            GameObject part = Instantiate(partBallPrefab, player.position, Quaternion.identity);
+            Rigidbody2D rb = part.GetComponent<Rigidbody2D>();
+
+            if (rb != null)
+            {
+                Vector3 randomOffset = new Vector3(Random.Range(-arcWidth, arcWidth),
+                                                Random.Range(-arcWidth, arcWidth), 0);
+
+                Vector3 midPoint = (player.position + targetPosition) / 2 +
+                                Vector3.up * arcHeight + randomOffset;
+
+                Vector3[] path = new Vector3[] { player.position, midPoint, targetPosition };
+                StartCoroutine(AnimatePart(rb, path));
+            }
+
+            // ⭐ Space out each instantiation
+            yield return new WaitForSeconds(spawnDelay);
+        }
+    }
+
+
+    IEnumerator AnimatePart(Rigidbody2D rb, Vector3[] path)
+    {
+        float elapsedTime = 0f;
+
+        while (elapsedTime < animationDuration)
+        {
+            elapsedTime += Time.deltaTime;
+            float t = elapsedTime / animationDuration;
+
+            // Quadratic Bezier
+            Vector3 position =
+                Mathf.Pow(1 - t, 2) * path[0] +
+                2 * (1 - t) * t * path[1] +
+                Mathf.Pow(t, 2) * path[2];
+
+            rb.MovePosition(position);
+            yield return null;
+        }
+
+        Destroy(rb.gameObject);
     }
 
 

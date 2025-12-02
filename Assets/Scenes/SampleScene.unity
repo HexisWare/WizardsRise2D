@@ -219,16 +219,24 @@ MonoBehaviour:
   playerController: {fileID: 1912421600}
   tileOptions:
   - tilePrefab: {fileID: 5158363378109355432, guid: b3890aa4607e526448cc4ec0893c5b4a, type: 3}
-    buildCost: 10
+    buildCost: 1
   - tilePrefab: {fileID: 5158363378109355432, guid: 06df67c9c9799284eb9ec22c9e6060c1, type: 3}
     buildCost: 20
   - tilePrefab: {fileID: 5158363378109355432, guid: 21e4933b1e025fc41920bb9e5249b4d0, type: 3}
     buildCost: 30
+  - tilePrefab: {fileID: 5158363378109355432, guid: 8741251d193ad09489c27834a3b1c7d4, type: 3}
+    buildCost: 100
   indicatorPrefab: {fileID: 5917527966876636369, guid: 6649de3465fd35b4698514570f22a9e4, type: 3}
   foundationTiles:
   - {fileID: 43714737}
   snapTolerance: 0.15
   snapStrength: 1
+  partBallPrefab: {fileID: 2635921133111142094, guid: 6d062af3844c31d40b8de0bdee89ab7c, type: 3}
+  numberOfParts: 10
+  arcHeight: 2
+  arcWidth: 2
+  animationDuration: 1
+  spawnDelay: 0.05
   restrictFirstBuildAbove: 1
   contactEpsilon: 0.02
   toggleBuildKey: 116
