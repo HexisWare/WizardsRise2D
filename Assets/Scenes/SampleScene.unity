@@ -137,7 +137,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 6069175791310024543, guid: b3890aa4607e526448cc4ec0893c5b4a, type: 3}
       propertyPath: m_LocalPosition.x
-      value: -1.421
+      value: -1.45
       objectReference: {fileID: 0}
     - target: {fileID: 6069175791310024543, guid: b3890aa4607e526448cc4ec0893c5b4a, type: 3}
       propertyPath: m_LocalPosition.y
@@ -227,6 +227,8 @@ MonoBehaviour:
   indicatorPrefab: {fileID: 5917527966876636369, guid: 6649de3465fd35b4698514570f22a9e4, type: 3}
   foundationTiles:
   - {fileID: 43714737}
+  snapTolerance: 0.15
+  snapStrength: 1
   restrictFirstBuildAbove: 1
   contactEpsilon: 0.02
   toggleBuildKey: 116

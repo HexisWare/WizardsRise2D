@@ -19,6 +19,8 @@ public class BuildingManager : MonoBehaviour
     public List<TileOption> tileOptions; // List of tile options
     public GameObject indicatorPrefab;   // Single indicator prefab
     public List<Transform> foundationTiles; // At least one placed tile to seed the grid
+    public float snapTolerance = 0.15f; // how close is “close enough” to auto-snap
+    public float snapStrength = 1f;     // 1 = full snap, 0.5 = half pull
 
     [Header("Rules")]
     public bool restrictFirstBuildAbove = true; // First placement cannot go Down
@@ -182,6 +184,8 @@ public class BuildingManager : MonoBehaviour
                 snapped.y = (mouseWorld.y > A.y) ? A.y + half.y : A.y - half.y;
             else if (vertical)
                 snapped.x = (mouseWorld.x > A.x) ? A.x + half.x : A.x - half.x;
+
+            snapped = ApplyGentleSnap(snapped, tileSize);
 
             // Forbidden below-min-Y placement
             if (snapped.y < _minYAllowed - 0.001f)
@@ -491,5 +495,43 @@ public class BuildingManager : MonoBehaviour
         return false;
     }
 
+    Vector2 ApplyGentleSnap(Vector2 candidateCenter, Vector2 candidateSize)
+    {
+        Vector2 best = candidateCenter;
+        float bestDist = snapTolerance;
+
+        foreach (var kv in _tileSizes)
+        {
+            Vector2 otherCenter = _tileCenters[kv.Key];
+            Vector2 otherSize   = kv.Value;
+            Vector2 half        = otherSize * 0.5f;
+
+            // All 4 corners of the existing tile
+            Vector2[] corners = new Vector2[]
+            {
+                otherCenter + new Vector2(-half.x,  half.y), // TL
+                otherCenter + new Vector2( half.x,  half.y), // TR
+                otherCenter + new Vector2(-half.x, -half.y), // BL
+                otherCenter + new Vector2( half.x, -half.y)  // BR
+            };
+
+            foreach (var c in corners)
+            {
+                float d = Vector2.Distance(candidateCenter, c);
+                if (d < bestDist)
+                {
+                    bestDist = d;
+                    best = c;
+                }
+            }
+        }
+
+        // If no corner was close, return original position
+        if (bestDist >= snapTolerance)
+            return candidateCenter;
+
+        // Snap gently (lerp) for smooth motion
+        return Vector2.Lerp(candidateCenter, best, snapStrength);
+    }
 
 }
