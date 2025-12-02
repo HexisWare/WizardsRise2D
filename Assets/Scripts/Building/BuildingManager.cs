@@ -1,6 +1,13 @@
 using UnityEngine;
 using System.Collections.Generic;
 
+[System.Serializable]
+public class TileOption
+{
+    public GameObject tilePrefab; // Prefab for the tile
+    public int buildCost;         // Cost to build this tile
+}
+
 public class BuildingManager : MonoBehaviour
 {
     [Header("Refs")]
@@ -9,45 +16,53 @@ public class BuildingManager : MonoBehaviour
     public PlayerController playerController;
 
     [Header("Tiles & Prefabs")]
-    public GameObject tilePrefab;           // tile prefab (SpriteRenderer + non-trigger Collider2D + FloorTile)
-    public GameObject indicatorPrefab;      // green/gray indicator (BuildIndicator + trigger BoxCollider2D)
-    public List<Transform> foundationTiles; // at least one placed tile to seed the grid
+    public List<TileOption> tileOptions; // List of tile options
+    public GameObject indicatorPrefab;   // Single indicator prefab
+    public List<Transform> foundationTiles; // At least one placed tile to seed the grid
 
     [Header("Rules")]
-    public int  buildCost = 10;
-    public bool restrictFirstBuildAbove = true; // first placement cannot go Down
+    public bool restrictFirstBuildAbove = true; // First placement cannot go Down
     public float contactEpsilon = 0.01f;
 
     [Header("Input")]
     public KeyCode toggleBuildKey = KeyCode.T;
+    public KeyCode nextTileKey = KeyCode.E; // Key to cycle to the next tile
+    public KeyCode previousTileKey = KeyCode.Q; // Key to cycle to the previous tile
 
     [Header("Indicator Colors")]
-    public Color availableColor   = Color.green;
+    public Color availableColor = Color.green;
     public Color unavailableColor = new Color(0.6f, 0.6f, 0.6f, 0.9f);
 
     [Header("Debug")]
     public bool showGizmos = false;
 
-    // --- internal ---
-    HashSet<Vector2Int> _occupied = new HashSet<Vector2Int>(); // grid cells
-    readonly List<GameObject> _indicators = new List<GameObject>();
-    Vector2 _cellSize;
-    Vector2 _gridOrigin;
-    bool _firstExpansionDone = false;
-    bool _buildMode = false;
-    Camera _cam;
-    BuildIndicator _hovered; // current hovered indicator (for yellow highlight)
+    // --- Internal ---
+    private HashSet<Vector2Int> _occupied = new HashSet<Vector2Int>(); // Grid cells
+    private GameObject _indicator; // Single indicator
+    private Vector2 _gridOrigin;
+    private bool _firstExpansionDone = false;
+    private bool _buildMode = false;
+    private Camera _cam;
+    private int _currentTileIndex = 0; // Index of the currently selected tile
+    private Vector2 _cellSize;
+    private Dictionary<Vector2Int, Vector2> _tileSizes = new Dictionary<Vector2Int, Vector2>();
+    private Dictionary<(Vector2, Vector2), int> _perimeterEdges = new Dictionary<(Vector2, Vector2), int>();
+
+
 
     void Start()
     {
         _cam = Camera.main;
         if (!playerInventory && player) playerInventory = player.GetComponent<PlayerInventory>();
 
-        // grid cell from prefab only
-        _cellSize = GetPrefabWorldSize(tilePrefab);
-        if (_cellSize.x <= 0f || _cellSize.y <= 0f) _cellSize = Vector2.one;
+        // Ensure tile options are set up
+        if (tileOptions == null || tileOptions.Count == 0)
+        {
+            Debug.LogError("[Building] No tile options assigned.");
+            return;
+        }
 
-        // origin from first seed tile
+        // Origin from first seed tile
         if (foundationTiles == null || foundationTiles.Count == 0 || foundationTiles[0] == null)
         {
             Debug.LogError("[Building] No foundationTiles assigned.");
@@ -55,128 +70,193 @@ public class BuildingManager : MonoBehaviour
         }
         _gridOrigin = foundationTiles[0].position;
 
-        // seed occupied
+        // Initialize cell size based on the first foundation tile's prefab
+        GameObject firstFoundationTile = foundationTiles[0].gameObject;
+        _cellSize = GetPrefabWorldSize(firstFoundationTile);
+
+        // Seed occupied and outer borders
         _occupied.Clear();
         foreach (var t in foundationTiles)
-            if (t) _occupied.Add(WorldToCellCenter(t.position));
+        {
+            if (t)
+            {
+                Vector2Int cell = WorldToCellCenter(t.position);
+                Vector2 tileSize = GetPrefabWorldSize(t.gameObject);
+
+                _occupied.Add(cell);
+                _tileSizes[cell] = tileSize;   // store REAL size
+            }
+        }
+
+        RebuildPerimeter();
+
+        // Create the single indicator
+        CreateIndicator();
     }
 
     void Update()
     {
-        if (playerInventory == null || tilePrefab == null) return;
+        if (playerInventory == null || tileOptions.Count == 0) return;
 
         // Toggle build mode
         if (Input.GetKeyDown(toggleBuildKey))
         {
             _buildMode = !_buildMode;
-            if (_buildMode) RefreshIndicators();
-            else { ClearIndicators(); _hovered = null; }
+            _indicator.SetActive(_buildMode);
         }
 
         if (!_buildMode) return;
 
-        // Update states each frame so color/clickability reflect current parts
-        bool canAfford = playerInventory.parts >= buildCost;
-        UpdateIndicatorStates(canAfford);
-
-        // Hover highlight (yellow) over the one under the mouse (only if buildable)
-        UpdateHover(canAfford);
-
-        // Place on Right Click (change to 0 for left click if you prefer)
-        if (canAfford && Input.GetMouseButtonDown(1) && _hovered != null && _hovered.canBuild)
+        // Cycle through tile options
+        if (Input.GetKeyDown(nextTileKey))
         {
-            TryBuild(_hovered.targetWorld);
+            _currentTileIndex = (_currentTileIndex + 1) % tileOptions.Count;
+            UpdateIndicator();
+        }
+        else if (Input.GetKeyDown(previousTileKey))
+        {
+            _currentTileIndex = (_currentTileIndex - 1 + tileOptions.Count) % tileOptions.Count;
+            UpdateIndicator();
+        }
+
+        // Update indicator position and state
+        UpdateIndicatorPosition();
+
+        // Place tile on right-click
+        if (Input.GetMouseButtonDown(1))
+        {
+            TryBuild(_indicator.transform.position);
         }
     }
 
-    // ---------------- Build ----------------
+    void CreateIndicator()
+    {
+        Debug.Log("[BuildingManager] Creating indicator...");
+        _indicator = Instantiate(indicatorPrefab);
+        if (_indicator == null)
+        {
+            Debug.LogError("[BuildingManager] Failed to create indicator. Check if indicatorPrefab is assigned.");
+            return;
+        }
+        _indicator.SetActive(false); // Initially hidden
+        Debug.Log("[BuildingManager] Indicator created successfully.");
+    }
+
+    void UpdateIndicatorPosition()
+    {
+        Vector2 mouseWorld = _cam.ScreenToWorldPoint(Input.mousePosition);
+
+        // Get size of the tile being placed
+        Vector2 tileSize = GetPrefabWorldSize(tileOptions[_currentTileIndex].tilePrefab);
+        Vector2 half = tileSize * 0.5f;
+
+        float bestDist = float.MaxValue;
+        Vector2 bestPos = mouseWorld;
+
+        foreach (var kvp in _perimeterEdges)
+        {
+            if (kvp.Value != 1) continue; // only outer edges
+
+            var (A, B) = kvp.Key;
+
+            // Get closest point ON the perimeter edge
+            Vector2 closest = ClosestPointOnSegment(A, B, mouseWorld);
+
+            // Determine edge direction (horizontal or vertical)
+            bool horizontal = Mathf.Abs(A.y - B.y) < 0.0001f; // same height → horizontal edge
+            bool vertical   = Mathf.Abs(A.x - B.x) < 0.0001f; // same x → vertical edge
+
+            Vector2 snappedCenter = closest;
+
+            if (horizontal)
+            {
+                // Horizontal: tile sits ABOVE or BELOW edge
+                // Determine which side mouse is on
+                if (mouseWorld.y > A.y)
+                    snappedCenter.y = A.y + half.y;  // above edge
+                else
+                    snappedCenter.y = A.y - half.y;  // below edge
+            }
+            else if (vertical)
+            {
+                // Vertical: tile sits LEFT or RIGHT of edge
+                if (mouseWorld.x > A.x)
+                    snappedCenter.x = A.x + half.x;  
+                else
+                    snappedCenter.x = A.x - half.x;
+            }
+
+            float d = Vector2.Distance(mouseWorld, snappedCenter);
+
+            if (d < bestDist)
+            {
+                bestDist = d;
+                bestPos = snappedCenter;
+            }
+        }
+
+        _indicator.SetActive(true);
+        _indicator.transform.position = bestPos;
+
+        // Color logic
+        var selectedTile = tileOptions[_currentTileIndex];
+        bool canAfford = playerInventory.parts >= selectedTile.buildCost;
+
+        var bi = _indicator.GetComponent<BuildIndicator>();
+        if (bi) bi.ConfigureState(canAfford, availableColor, unavailableColor);
+    }
+
+
+    Vector2 ClosestPointOnSegment(Vector2 A, Vector2 B, Vector2 P)
+    {
+        Vector2 AP = P - A;
+        Vector2 AB = B - A;
+
+        float magnitudeAB = AB.sqrMagnitude;
+        float ABAPproduct = Vector2.Dot(AP, AB);
+        float distance = ABAPproduct / magnitudeAB;
+
+        if (distance < 0) return A;
+        else if (distance > 1) return B;
+        else return A + AB * distance;
+    }
+
+
+    void UpdateIndicator()
+    {
+        var selectedTile = tileOptions[_currentTileIndex];
+        Vector2 size = GetPrefabWorldSize(selectedTile.tilePrefab);
+
+        var bi = _indicator.GetComponent<BuildIndicator>();
+        if (bi != null)
+            bi.SetVisualSize(size);
+    }
+
     void TryBuild(Vector3 worldCenter)
     {
-        if (!playerInventory.SpendParts(buildCost)) return;
+        var selectedTile = tileOptions[_currentTileIndex];
+        if (!playerInventory.SpendParts(selectedTile.buildCost)) return;
 
-        // snap to grid
-        Vector2Int cell = WorldToCellCenter(worldCenter);
-        Vector3 snapped = (Vector3)CellCenterToWorld(cell);
+        // WorldCenter is ALREADY snapped against the perimeter edge
+        Vector3 snapped = worldCenter;
 
-        var tile = Instantiate(tilePrefab, snapped, Quaternion.identity);
+        // Register tile position and size
+        Vector2Int cell = WorldToCellCenter(snapped);
+        var tile = Instantiate(selectedTile.tilePrefab, snapped, Quaternion.identity);
         if (!tile.GetComponent<FloorTile>()) tile.AddComponent<FloorTile>();
 
+        Vector2 tileSize = GetPrefabWorldSize(selectedTile.tilePrefab);
+
+        _tileSizes[cell] = tileSize;
         _occupied.Add(cell);
-        if (!_firstExpansionDone) _firstExpansionDone = true;
 
-        // Placeholder just upgrade wizard upon build
-        PlayerHelper.damage += 1;
-        PlayerHelper.attackspeed -= 0.1f;
-        Debug.Log(PlayerHelper.damage);
-        Debug.Log(PlayerHelper.attackspeed);
-        playerController.fireRate = PlayerHelper.attackspeed;
+        // Recalculate actual perimeter
+        RebuildPerimeter();
 
-        RefreshIndicators(); // rebuild perimeter after placement
+        // update indicator
+        UpdateIndicatorPosition();
     }
 
-    // ---------------- Indicators ----------------
-    void RefreshIndicators()
-    {
-        ClearIndicators();
-
-        // perimeter candidates
-        HashSet<Vector2Int> candidates = new HashSet<Vector2Int>();
-        foreach (var c in _occupied)
-            foreach (var n in EligibleNeighbors(c))
-                if (!_occupied.Contains(n))
-                    candidates.Add(n);
-
-        bool canAfford = playerInventory && playerInventory.parts >= buildCost;
-
-        foreach (var c in candidates)
-        {
-            Vector2 center = CellCenterToWorld(c);
-            if (!IsSpaceFree(center, _cellSize)) continue;
-
-            var go = Instantiate(indicatorPrefab, center, Quaternion.identity);
-            var bi = go.GetComponent<BuildIndicator>();
-            bi.targetWorld = center;
-            bi.SetVisualSize(_cellSize);
-            bi.ConfigureState(canAfford, availableColor, unavailableColor);
-            _indicators.Add(go);
-        }
-    }
-
-    void UpdateIndicatorStates(bool canAfford)
-    {
-        foreach (var go in _indicators)
-        {
-            if (!go) continue;
-            var bi = go.GetComponent<BuildIndicator>();
-            if (!bi) continue;
-            bi.ConfigureState(canAfford, availableColor, unavailableColor);
-        }
-    }
-
-    void UpdateHover(bool canAfford)
-    {
-        // clear previous hover
-        if (_hovered != null) { _hovered.SetHovered(false); _hovered = null; }
-
-        if (!canAfford) return;
-
-        Vector2 mouse = _cam ? (Vector2)_cam.ScreenToWorldPoint(Input.mousePosition)
-                             : (Vector2)Input.mousePosition;
-
-        var hit = Physics2D.OverlapPoint(mouse);
-        var bi = hit ? hit.GetComponent<BuildIndicator>() : null;
-        if (bi != null && bi.canBuild)
-        {
-            bi.SetHovered(true);
-            _hovered = bi;
-        }
-    }
-
-    void ClearIndicators()
-    {
-        foreach (var go in _indicators) if (go) Destroy(go);
-        _indicators.Clear();
-    }
 
     // ---------------- Grid helpers ----------------
     Vector2Int WorldToCellCenter(Vector3 world)
@@ -192,22 +272,6 @@ public class BuildingManager : MonoBehaviour
         return _gridOrigin + new Vector2(cell.x * _cellSize.x, cell.y * _cellSize.y);
     }
 
-    IEnumerable<Vector2Int> EligibleNeighbors(Vector2Int c)
-    {
-        if (!_firstExpansionDone && restrictFirstBuildAbove)
-        {
-            yield return new Vector2Int(c.x, c.y + 1); // up
-            yield return new Vector2Int(c.x - 1, c.y); // left
-            yield return new Vector2Int(c.x + 1, c.y); // right
-            yield break;
-        }
-        yield return new Vector2Int(c.x, c.y + 1);
-        yield return new Vector2Int(c.x, c.y - 1);
-        yield return new Vector2Int(c.x - 1, c.y);
-        yield return new Vector2Int(c.x + 1, c.y);
-    }
-
-    // ---------------- Size & space ----------------
     static Vector2 GetPrefabWorldSize(GameObject prefab)
     {
         if (prefab == null) return Vector2.one;
@@ -216,25 +280,6 @@ public class BuildingManager : MonoBehaviour
         {
             Vector3 s = prefab.transform.lossyScale;
             return new Vector2(Mathf.Abs(box.size.x * s.x), Mathf.Abs(box.size.y * s.y));
-        }
-        if (prefab.TryGetComponent<CircleCollider2D>(out var cir))
-        {
-            Vector3 s = prefab.transform.lossyScale;
-            float d = cir.radius * 2f;
-            return new Vector2(Mathf.Abs(d * s.x), Mathf.Abs(d * s.y));
-        }
-        if (prefab.TryGetComponent<PolygonCollider2D>(out var poly))
-        {
-            Vector3 s = prefab.transform.lossyScale;
-            Vector2 min = new Vector2(float.MaxValue, float.MaxValue);
-            Vector2 max = new Vector2(float.MinValue, float.MinValue);
-            foreach (var p in poly.points)
-            {
-                Vector2 wp = new Vector2(p.x * s.x, p.y * s.y);
-                min = Vector2.Min(min, wp);
-                max = Vector2.Max(max, wp);
-            }
-            return max - min;
         }
         if (prefab.TryGetComponent<SpriteRenderer>(out var sr))
         {
@@ -245,33 +290,59 @@ public class BuildingManager : MonoBehaviour
         return Vector2.one;
     }
 
-    bool IsSpaceFree(Vector2 center, Vector2 size)
+    void OnDrawGizmos()
     {
-        Vector2 test = new Vector2(Mathf.Max(0.01f, size.x - contactEpsilon),
-                                   Mathf.Max(0.01f, size.y - contactEpsilon));
+        if (!showGizmos || _perimeterEdges.Count == 0)
+            return;
 
-        var hits = Physics2D.OverlapBoxAll(center, test, 0f);
-        foreach (var h in hits)
+        Gizmos.color = Color.magenta;
+
+        foreach (var kvp in _perimeterEdges)
         {
-            if (!h || h.isTrigger) continue;
-
-            // Only block on placed tiles or static world; ignore dynamic entities
-            if (h.GetComponent<FloorTile>() != null) return false;
-            if (h.attachedRigidbody == null) return false; // static collider (e.g., foundation/walls)
-        }
-        return true;
-    }
-
-    void OnDrawGizmosSelected()
-    {
-        if (!showGizmos || tilePrefab == null) return;
-        Gizmos.color = new Color(0f, 1f, 0f, 0.15f);
-        foreach (var go in _indicators)
-        {
-            if (!go) continue;
-            var bi = go.GetComponent<BuildIndicator>();
-            if (bi == null) continue;
-            Gizmos.DrawWireCube(bi.targetWorld, _cellSize);
+            if (kvp.Value == 1) // outer edges
+            {
+                var (a, b) = kvp.Key;
+                Gizmos.DrawLine(a, b);
+            }
         }
     }
+
+    // Helper: treats edge AB and BA as the same edge
+    void AddEdge(Dictionary<(Vector2, Vector2), int> dict, Vector2 p1, Vector2 p2)
+    {
+        // Canonical order so (A,B) == (B,A)
+        bool useAsIs = p1.x < p2.x || 
+                    (Mathf.Approximately(p1.x, p2.x) && p1.y <= p2.y);
+
+        var key = useAsIs ? (p1, p2) : (p2, p1);
+
+        if (dict.TryGetValue(key, out int count))
+            dict[key] = count + 1;
+        else
+            dict[key] = 1;
+    }
+
+    void RebuildPerimeter()
+    {
+        _perimeterEdges.Clear();
+
+        foreach (var kvp in _tileSizes)
+        {
+            Vector2Int cell = kvp.Key;
+            Vector2 size = kvp.Value;
+            Vector2 center = CellCenterToWorld(cell);
+            Vector2 half = size * 0.5f;
+
+            Vector2 topLeft     = center + new Vector2(-half.x,  half.y);
+            Vector2 topRight    = center + new Vector2( half.x,  half.y);
+            Vector2 bottomLeft  = center + new Vector2(-half.x, -half.y);
+            Vector2 bottomRight = center + new Vector2( half.x, -half.y);
+
+            AddEdge(_perimeterEdges, topLeft,     topRight);
+            AddEdge(_perimeterEdges, topRight,    bottomRight);
+            AddEdge(_perimeterEdges, bottomRight, bottomLeft);
+            AddEdge(_perimeterEdges, bottomLeft,  topLeft);
+        }
+    }
+
 }
