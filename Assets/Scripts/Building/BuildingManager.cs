@@ -46,6 +46,7 @@ public class BuildingManager : MonoBehaviour
     private int _currentTileIndex = 0; // Index of the currently selected tile
     private Vector2 _cellSize;
     private Dictionary<Vector2Int, Vector2> _tileSizes = new Dictionary<Vector2Int, Vector2>();
+    private Dictionary<Vector2Int, Vector2> _tileCenters = new Dictionary<Vector2Int, Vector2>();
     private Dictionary<(Vector2, Vector2), int> _perimeterEdges = new Dictionary<(Vector2, Vector2), int>();
 
 
@@ -84,7 +85,8 @@ public class BuildingManager : MonoBehaviour
                 Vector2 tileSize = GetPrefabWorldSize(t.gameObject);
 
                 _occupied.Add(cell);
-                _tileSizes[cell] = tileSize;   // store REAL size
+                _tileSizes[cell] = tileSize;
+                _tileCenters[cell] = t.position;
             }
         }
 
@@ -171,7 +173,6 @@ public class BuildingManager : MonoBehaviour
             if (horizontal)
             {
                 // Horizontal: tile sits ABOVE or BELOW edge
-                // Determine which side mouse is on
                 if (mouseWorld.y > A.y)
                     snappedCenter.y = A.y + half.y;  // above edge
                 else
@@ -181,10 +182,14 @@ public class BuildingManager : MonoBehaviour
             {
                 // Vertical: tile sits LEFT or RIGHT of edge
                 if (mouseWorld.x > A.x)
-                    snappedCenter.x = A.x + half.x;  
+                    snappedCenter.x = A.x + half.x;
                 else
                     snappedCenter.x = A.x - half.x;
             }
+
+            // ❗ Skip this candidate if it would overlap any existing tile
+            if (OverlapsExistingRect(snappedCenter, tileSize))
+                continue;
 
             float d = Vector2.Distance(mouseWorld, snappedCenter);
 
@@ -195,6 +200,13 @@ public class BuildingManager : MonoBehaviour
             }
         }
 
+        // No valid perimeter position found
+        if (bestDist == float.MaxValue)
+        {
+            _indicator.SetActive(false);
+            return;
+        }
+
         _indicator.SetActive(true);
         _indicator.transform.position = bestPos;
 
@@ -203,8 +215,10 @@ public class BuildingManager : MonoBehaviour
         bool canAfford = playerInventory.parts >= selectedTile.buildCost;
 
         var bi = _indicator.GetComponent<BuildIndicator>();
-        if (bi) bi.ConfigureState(canAfford, availableColor, unavailableColor);
+        if (bi)
+            bi.ConfigureState(canAfford, availableColor, unavailableColor);
     }
+
 
 
     Vector2 ClosestPointOnSegment(Vector2 A, Vector2 B, Vector2 P)
@@ -235,25 +249,35 @@ public class BuildingManager : MonoBehaviour
     void TryBuild(Vector3 worldCenter)
     {
         var selectedTile = tileOptions[_currentTileIndex];
-        if (!playerInventory.SpendParts(selectedTile.buildCost)) return;
+
+        // Get intended size & center
+        Vector2 tileSize = GetPrefabWorldSize(selectedTile.tilePrefab);
+        Vector2 center2D = worldCenter;
+
+        // Do NOT allow overlapping builds (rectangle-based)
+        if (OverlapsExistingRect(center2D, tileSize))
+            return;
+
+        if (!playerInventory.SpendParts(selectedTile.buildCost))
+            return;
 
         // WorldCenter is ALREADY snapped against the perimeter edge
         Vector3 snapped = worldCenter;
 
-        // Register tile position and size
-        Vector2Int cell = WorldToCellCenter(snapped);
+        // Instantiate the tile at its actual snapped position
         var tile = Instantiate(selectedTile.tilePrefab, snapped, Quaternion.identity);
         if (!tile.GetComponent<FloorTile>()) tile.AddComponent<FloorTile>();
 
-        Vector2 tileSize = GetPrefabWorldSize(selectedTile.tilePrefab);
-
-        _tileSizes[cell] = tileSize;
+        // Register in grid-space and world-space
+        Vector2Int cell = WorldToCellCenter(snapped);
+        _tileSizes[cell]   = tileSize;
+        _tileCenters[cell] = snapped;
         _occupied.Add(cell);
 
-        // Recalculate actual perimeter
+        // Recalculate actual perimeter based on real positions
         RebuildPerimeter();
 
-        // update indicator
+        // Update indicator after placement
         UpdateIndicatorPosition();
     }
 
@@ -326,11 +350,14 @@ public class BuildingManager : MonoBehaviour
     {
         _perimeterEdges.Clear();
 
+        // Count how many times each edge appears
+        var edgeCount = new Dictionary<(Vector2, Vector2), int>();
+
         foreach (var kvp in _tileSizes)
         {
             Vector2Int cell = kvp.Key;
             Vector2 size = kvp.Value;
-            Vector2 center = CellCenterToWorld(cell);
+            Vector2 center = _tileCenters[cell];
             Vector2 half = size * 0.5f;
 
             Vector2 topLeft     = center + new Vector2(-half.x,  half.y);
@@ -338,11 +365,108 @@ public class BuildingManager : MonoBehaviour
             Vector2 bottomLeft  = center + new Vector2(-half.x, -half.y);
             Vector2 bottomRight = center + new Vector2( half.x, -half.y);
 
-            AddEdge(_perimeterEdges, topLeft,     topRight);
-            AddEdge(_perimeterEdges, topRight,    bottomRight);
-            AddEdge(_perimeterEdges, bottomRight, bottomLeft);
-            AddEdge(_perimeterEdges, bottomLeft,  topLeft);
+            // Use AddEdge as a counter on edgeCount
+            AddEdge(edgeCount, topLeft,     topRight);     // top
+            AddEdge(edgeCount, topRight,    bottomRight);  // right
+            AddEdge(edgeCount, bottomRight, bottomLeft);   // bottom
+            AddEdge(edgeCount, bottomLeft,  topLeft);      // left
+        }
+
+        // Only edges seen exactly once are on the outside
+        foreach (var kvp in edgeCount)
+        {
+            if (kvp.Value == 1)
+            {
+                _perimeterEdges[kvp.Key] = 1;
+            }
         }
     }
+
+
+    // Normalize edge so (A,B) == (B,A)
+    (Vector2, Vector2) NormalizeEdge(Vector2 a, Vector2 b)
+    {
+        if (a.x < b.x || (Mathf.Approximately(a.x, b.x) && a.y <= b.y))
+            return (a, b);
+        return (b, a);
+    }
+
+    List<(Vector2, Vector2)> MergeColinearEdges(List<(Vector2 a, Vector2 b)> edges)
+    {
+        List<(Vector2, Vector2)> result = new List<(Vector2, Vector2)>();
+
+        // Horizontal merges
+        var horizontal = edges.FindAll(e => Mathf.Abs(e.a.y - e.b.y) < 0.0001f);
+        horizontal.Sort((e1, e2) => e1.a.x.CompareTo(e2.a.x));
+
+        for (int i = 0; i < horizontal.Count; i++)
+        {
+            Vector2 start = horizontal[i].a;
+            Vector2 end = horizontal[i].b;
+
+            while (i + 1 < horizontal.Count &&
+                Mathf.Abs(horizontal[i + 1].a.y - start.y) < 0.001f &&
+                Mathf.Abs(horizontal[i + 1].a.x - end.x) < 0.001f)
+            {
+                end = horizontal[++i].b;
+            }
+
+            result.Add((start, end));
+        }
+
+        // Vertical merges
+        var vertical = edges.FindAll(e => Mathf.Abs(e.a.x - e.b.x) < 0.0001f);
+        vertical.Sort((e1, e2) => e1.a.y.CompareTo(e2.a.y));
+
+        for (int i = 0; i < vertical.Count; i++)
+        {
+            Vector2 start = vertical[i].a;
+            Vector2 end = vertical[i].b;
+
+            while (i + 1 < vertical.Count &&
+                Mathf.Abs(vertical[i + 1].a.x - start.x) < 0.001f &&
+                Mathf.Abs(vertical[i + 1].a.y - end.y) < 0.001f)
+            {
+                end = vertical[++i].b;
+            }
+
+            result.Add((start, end));
+        }
+
+        return result;
+    }
+
+    // AABB overlap using our stored tile centers/sizes
+    bool RectsOverlap(Vector2 c1, Vector2 s1, Vector2 c2, Vector2 s2)
+    {
+        Vector2 half1 = s1 * 0.5f;
+        Vector2 half2 = s2 * 0.5f;
+
+        float dx = Mathf.Abs(c1.x - c2.x);
+        float dy = Mathf.Abs(c1.y - c2.y);
+
+        float limitX = half1.x + half2.x - contactEpsilon;
+        float limitY = half1.y + half2.y - contactEpsilon;
+
+        // overlap only if they actually intrude into each other
+        return (dx < limitX) && (dy < limitY);
+    }
+
+    // Does a candidate tile (center/size) overlap ANY existing tile?
+    bool OverlapsExistingRect(Vector2 center, Vector2 size)
+    {
+        foreach (var kvp in _tileSizes)
+        {
+            Vector2Int cell = kvp.Key;
+            Vector2 existingSize   = kvp.Value;
+            Vector2 existingCenter = _tileCenters[cell];
+
+            if (RectsOverlap(center, size, existingCenter, existingSize))
+                return true;
+        }
+
+        return false;
+    }
+
 
 }
