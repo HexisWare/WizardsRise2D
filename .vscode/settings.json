@@ -65,6 +65,7 @@
     "explorer.fileNesting.enabled": true,
     "explorer.fileNesting.patterns": {
         "*.sln": "*.csproj",
+        "*.slnx": "*.csproj"
     },
-    "dotnet.defaultSolution": "wizards.sln"
+    "dotnet.defaultSolution": "wizardsRISEreal.slnx"
 }
