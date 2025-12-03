@@ -40,9 +40,9 @@ public class BuildingManager : MonoBehaviour
     public KeyCode previousTileKey = KeyCode.Q; // Key to cycle to the previous tile
 
     [Header("Indicator Colors")]
-    public Color availableColor = Color.green;
+    public Color availableColor = new Color(0, 1, 0, 0.8f); // Semi-transparent green
     // public Color unavailableColor = new Color(0.6f, 0.6f, 0.6f, 0.9f);
-    public Color unavailableColor = Color.red;
+    public Color unavailableColor = new Color(1, 0, 0, 0.8f); // Semi-transparent red
 
     [Header("Debug")]
     public bool showGizmos = false;
@@ -89,6 +89,8 @@ public class BuildingManager : MonoBehaviour
         // Initialize cell size based on the first foundation tile's prefab
         GameObject firstFoundationTile = foundationTiles[0].gameObject;
         _cellSize = GetPrefabWorldSize(firstFoundationTile);
+
+        Debug.Log($"[BuildingManager] Grid origin: {_gridOrigin}, Cell size: {_cellSize}");
 
         // Seed occupied and outer borders
         _occupied.Clear();
@@ -155,6 +157,7 @@ public class BuildingManager : MonoBehaviour
             Debug.LogError("[BuildingManager] Failed to create indicator. Check if indicatorPrefab is assigned.");
             return;
         }
+        _indicator.transform.localScale = Vector3.one; // Reset scale to 1x1x1
         _indicator.SetActive(false); // Initially hidden
         Debug.Log("[BuildingManager] Indicator created successfully.");
     }
@@ -167,8 +170,9 @@ public class BuildingManager : MonoBehaviour
             return;
         }
 
-        Vector2 mouseWorld = _cam.ScreenToWorldPoint(Input.mousePosition);
+        _indicator.SetActive(true);
 
+        Vector2 mouseWorld = _cam.ScreenToWorldPoint(Input.mousePosition);
         Vector2 tileSize = GetPrefabWorldSize(tileOptions[_currentTileIndex].tilePrefab);
         Vector2 half = tileSize * 0.5f;
 
@@ -189,7 +193,6 @@ public class BuildingManager : MonoBehaviour
 
             Vector2 snapped = closest;
 
-            // Correct side positioning
             if (horizontal)
                 snapped.y = (mouseWorld.y > A.y) ? A.y + half.y : A.y - half.y;
             else if (vertical)
@@ -197,15 +200,12 @@ public class BuildingManager : MonoBehaviour
 
             snapped = ApplyGentleSnap(snapped, tileSize);
 
-            // Forbidden below-min-Y placement
             if (snapped.y < _minYAllowed - 0.001f)
                 continue;
 
-            // Skip if overlapping existing
             if (OverlapsExistingRect(snapped, tileSize))
                 continue;
 
-            // VALID candidate
             float d = Vector2.Distance(mouseWorld, snapped);
             if (d < bestDist)
             {
@@ -215,48 +215,249 @@ public class BuildingManager : MonoBehaviour
             }
         }
 
-        // ----- FINAL VALIDATION HANDLING -----
+        var tile = tileOptions[_currentTileIndex];
+        bool canAfford = playerInventory.parts >= tile.buildCost;
+        var bi = _indicator.GetComponent<BuildIndicator>();
+        Sprite tileSprite = tile.tilePrefab.GetComponent<SpriteRenderer>().sprite;
+
+        // ------------------------------------------
+        // VALID POSITION FOUND
+        // ------------------------------------------
         if (foundValid)
         {
-            // Save this as the new last known valid position
             _lastGoodPos = bestPos;
             _hasLastGood = true;
-
-            _indicator.SetActive(true);
             _indicator.transform.position = bestPos;
 
-            var tile = tileOptions[_currentTileIndex];
-            bool canAfford = playerInventory.parts >= tile.buildCost;
-
-            var bi = _indicator.GetComponent<BuildIndicator>();
-            if (bi) bi.ConfigureState(canAfford, availableColor, unavailableColor);
+            if (canAfford)
+            {
+                bi.SetPreviewSprite(tileSprite, tileSize);
+                bi.SetOverlayColor(availableColor);
+            }
+            else
+            {
+                bi.SetPreviewSprite(null, tileSize);
+                bi.SetOverlayColor(unavailableColor);
+            }
 
             return;
         }
 
-        // No valid position this frame
+        // ------------------------------------------
+        // NO VALID THIS FRAME → USE LAST GOOD
+        // ------------------------------------------
         if (_hasLastGood)
         {
-            _indicator.SetActive(true);
             _indicator.transform.position = _lastGoodPos;
 
-            // The indicator STILL updates color based on affordability
-            var tile = tileOptions[_currentTileIndex];
-            bool canAfford = playerInventory.parts >= tile.buildCost;
-
-            var bi = _indicator.GetComponent<BuildIndicator>();
-            if (bi) bi.ConfigureState(canAfford, availableColor, unavailableColor);
-
+            if (canAfford)
+            {
+                bi.SetPreviewSprite(tileSprite, tileSize);
+                bi.SetOverlayColor(availableColor);
+            }
+            else
+            {
+                bi.SetPreviewSprite(null, tileSize);
+                bi.SetOverlayColor(unavailableColor);
+            }
             return;
         }
-        else
-        {
-            // No valid ever found → hide indicator
-            _indicator.SetActive(false);
-            return;
-        }
+
+        // ------------------------------------------
+        // No valid and no last-good → hide
+        // ------------------------------------------
+        _indicator.SetActive(false);
     }
 
+
+
+    // void UpdateIndicatorPosition()
+    // {
+    //     if (_perimeterEdges.Count == 0)
+    //     {
+    //         _indicator.SetActive(false);
+    //         return;
+    //     }
+    //     _indicator.transform.localScale = Vector3.one; // Reset scale to 1x1x1
+    //     _indicator.SetActive(true); // Ensure the indicator is visible
+
+    //     Vector2 mouseWorld = _cam.ScreenToWorldPoint(Input.mousePosition);
+
+    //     Vector2 tileSize = GetPrefabWorldSize(tileOptions[_currentTileIndex].tilePrefab);
+    //     Vector2 half = tileSize * 0.5f;
+
+    //     float bestDist = float.MaxValue;
+    //     Vector2 bestPos = Vector2.zero;
+    //     bool foundValid = false;
+
+    //     foreach (var kvp in _perimeterEdges)
+    //     {
+    //         if (kvp.Value != 1) continue;
+
+    //         var (A, B) = kvp.Key;
+
+    //         Vector2 closest = ClosestPointOnSegment(A, B, mouseWorld);
+
+    //         bool horizontal = Mathf.Abs(A.y - B.y) < 0.0001f;
+    //         bool vertical = Mathf.Abs(A.x - B.x) < 0.0001f;
+
+    //         Vector2 snapped = closest;
+
+    //         // Correct side positioning
+    //         if (horizontal)
+    //             snapped.y = (mouseWorld.y > A.y) ? A.y + half.y : A.y - half.y;
+    //         else if (vertical)
+    //             snapped.x = (mouseWorld.x > A.x) ? A.x + half.x : A.x - half.x;
+
+    //         snapped = ApplyGentleSnap(snapped, tileSize);
+
+    //         // Forbidden below-min-Y placement
+    //         if (snapped.y < _minYAllowed - 0.001f)
+    //             continue;
+
+    //         // Skip if overlapping existing
+    //         if (OverlapsExistingRect(snapped, tileSize))
+    //             continue;
+
+    //         // VALID candidate
+    //         float d = Vector2.Distance(mouseWorld, snapped);
+    //         if (d < bestDist)
+    //         {
+    //             bestDist = d;
+    //             bestPos = snapped;
+    //             foundValid = true;
+    //         }
+    //     }
+
+    //     // ----- FINAL VALIDATION HANDLING -----
+    //     if (foundValid)
+    //     {
+    //         // Save this as the new last known valid position
+    //         _lastGoodPos = bestPos;
+    //         _hasLastGood = true;
+
+    //         _indicator.SetActive(true);
+    //         _indicator.transform.position = bestPos;
+    //         _indicator.transform.localScale = Vector3.one; // Reset scale to 1x1x1
+
+    //         var tile = tileOptions[_currentTileIndex];
+    //         bool canAfford = playerInventory.parts >= tile.buildCost;
+
+    //         var bi = _indicator.GetComponent<BuildIndicator>();
+    //         var tileSprite = tileOptions[_currentTileIndex].tilePrefab.GetComponent<SpriteRenderer>().sprite;
+    //         if (tileSprite == null)
+    //         {
+    //             Debug.LogError("[BuildingManager] Tile prefab does not have a valid sprite assigned.");
+    //             return;
+    //         }
+    //         if (bi)
+    //         {
+    //             Debug.Log($"[BuildingManager] Setting preview sprite: {tileSprite.name}");
+
+    //             bi.SetPreviewSprite(tileSprite);
+    //             bi.SetVisualSize(tileSize);    // <-- FIX HERE
+    //             bi.ConfigureState(canAfford, availableColor, unavailableColor);
+    //         }
+
+    //         return;
+    //     }
+
+    //     // No valid position this frame
+    //     if (_hasLastGood)
+    //     {
+    //         _indicator.SetActive(true);
+    //         _indicator.transform.position = _lastGoodPos;
+    //         _indicator.transform.localScale = Vector3.one; // Reset scale to 1x1x1
+
+    //         // The indicator STILL updates color based on affordability
+    //         var tile = tileOptions[_currentTileIndex];
+    //         bool canAfford = playerInventory.parts >= tile.buildCost;
+
+    //         var bi = _indicator.GetComponent<BuildIndicator>();
+    //         var tileSprite = tileOptions[_currentTileIndex].tilePrefab.GetComponent<SpriteRenderer>().sprite;
+    //         if (tileSprite == null)
+    //         {
+    //             Debug.LogError("[BuildingManager] Tile prefab does not have a valid sprite assigned.");
+    //             return;
+    //         }
+    //         if (bi)
+    //         {
+    //             Debug.Log($"[BuildingManager] Setting preview sprite: {tileSprite.name}");
+
+    //             bi.SetPreviewSprite(tileSprite);
+    //             bi.SetVisualSize(tileSize);    // <-- FIX HERE
+    //             bi.ConfigureState(canAfford, availableColor, unavailableColor);
+    //         }
+
+    //         return;
+    //     }
+    //     else
+    //     {
+    //         // No valid ever found → hide indicator
+    //         _indicator.SetActive(false);
+    //         return;
+    //     }
+    // }
+
+    // void UpdateIndicatorPosition()
+    // {
+    //     // Check if there are any perimeter edges
+    //     if (_perimeterEdges.Count == 0)
+    //     {
+    //         _indicator.SetActive(false);
+    //         return;
+    //     }
+
+    //     // Ensure the indicator is visible
+    //     _indicator.SetActive(true);
+
+    //     // Get the mouse position in world coordinates
+    //     Vector2 mouseWorld = _cam.ScreenToWorldPoint(Input.mousePosition);
+
+    //     float bestDist = float.MaxValue;
+    //     Vector2 bestPos = Vector2.zero;
+    //     bool foundValid = false;
+
+    //     // Find the closest valid position on the perimeter edges
+    //     foreach (var kvp in _perimeterEdges)
+    //     {
+    //         if (kvp.Value != 1) continue;
+
+    //         var (A, B) = kvp.Key;
+
+    //         Vector2 closest = ClosestPointOnSegment(A, B, mouseWorld);
+
+    //         // Check if this is the closest valid position
+    //         float d = Vector2.Distance(mouseWorld, closest);
+    //         if (d < bestDist)
+    //         {
+    //             bestDist = d;
+    //             bestPos = closest;
+    //             foundValid = true;
+    //         }
+    //     }
+
+    //     // If a valid position is found, update the indicator
+    //     if (foundValid)
+    //     {
+    //         _indicator.transform.position = bestPos;
+
+    //         var tile = tileOptions[_currentTileIndex];
+    //         bool canAfford = playerInventory.parts >= tile.buildCost;
+
+    //         var bi = _indicator.GetComponent<BuildIndicator>();
+    //         if (bi)
+    //         {
+    //             // Update the indicator state based on whether the player can afford the tile
+    //             bi.ConfigureState(canAfford, availableColor, unavailableColor);
+    //         }
+
+    //         return;
+    //     }
+
+    //     // If no valid position is found, hide the indicator
+    //     _indicator.SetActive(false);
+    // }
 
     Vector2 ClosestPointOnSegment(Vector2 A, Vector2 B, Vector2 P)
     {
@@ -273,15 +474,45 @@ public class BuildingManager : MonoBehaviour
     }
 
 
+    // void UpdateIndicator()
+    // {
+    //     var selectedTile = tileOptions[_currentTileIndex];
+    //     Vector2 size = GetPrefabWorldSize(selectedTile.tilePrefab);
+
+    //     var bi = _indicator.GetComponent<BuildIndicator>();
+    //     if (bi != null)
+    //         bi.SetVisualSize(size);
+    // }
+
     void UpdateIndicator()
     {
-        var selectedTile = tileOptions[_currentTileIndex];
-        Vector2 size = GetPrefabWorldSize(selectedTile.tilePrefab);
+        if (!_indicator) return;
 
         var bi = _indicator.GetComponent<BuildIndicator>();
-        if (bi != null)
-            bi.SetVisualSize(size);
+        if (!bi) return;
+
+        var tile = tileOptions[_currentTileIndex];
+        Vector2 tileSize = GetPrefabWorldSize(tile.tilePrefab);
+        Sprite tileSprite = tile.tilePrefab.GetComponent<SpriteRenderer>().sprite;
+
+        bool canAfford = playerInventory.parts >= tile.buildCost;
+
+        if (canAfford)
+        {
+            bi.SetPreviewSprite(tileSprite, tileSize);
+            bi.SetIndicatorSize(tileSize);
+            bi.SetOverlayColor(availableColor);
+        }
+        else
+        {
+            bi.SetPreviewSprite(null, tileSize);
+            bi.SetIndicatorSize(tileSize);
+            bi.SetOverlayColor(unavailableColor);
+
+        }
     }
+
+
 
     void TryBuild(Vector3 worldCenter)
     {
@@ -487,6 +718,8 @@ public class BuildingManager : MonoBehaviour
                 _perimeterEdges[kvp.Key] = 1;
             }
         }
+
+        Debug.Log($"[BuildingManager] Rebuilt perimeter edges: {_perimeterEdges.Count} edges found.");
     }
 
 
